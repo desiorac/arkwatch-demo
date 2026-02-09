@@ -1,0 +1,87 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: arkwatch-postgres
+    environment:
+      POSTGRES_DB: arkwatch
+      POSTGRES_USER: arkwatch
+      POSTGRES_PASSWORD: arkwatch_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arkwatch"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: arkwatch-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: arkwatch-backend
+    environment:
+      DATABASE_URL: postgresql://arkwatch:arkwatch_dev_password@postgres:5432/arkwatch
+      REDIS_URL: redis://redis:6379
+      ARKWATCH_ENV: development
+      SECRET_KEY: demo_secret_key_change_in_production
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.worker
+    container_name: arkwatch-worker
+    environment:
+      DATABASE_URL: postgresql://arkwatch:arkwatch_dev_password@postgres:5432/arkwatch
+      REDIS_URL: redis://redis:6379
+      ARKWATCH_ENV: development
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+
+  monitoring:
+    build:
+      context: ./monitoring
+      dockerfile: Dockerfile
+    container_name: arkwatch-monitoring
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    environment:
+      API_URL: http://backend:8080
+
+volumes:
+  postgres_data:
